@@ -5,9 +5,16 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 
 	"io"
 )
+
+type CryptStore struct {
+	Nonce      string
+	Ciphertext string
+}
 
 func DeriveKey(password string) []byte {
 	bytes := sha256.Sum256([]byte(password))
@@ -22,39 +29,60 @@ func Encrypt(password string, plaintext []byte) []byte {
 		panic(err)
 	}
 
-	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
-
-	iv := ciphertext[:aes.BlockSize]
-
-	if _, err = io.ReadFull(rand.Reader, iv); err != nil {
-		return nil
+	nonce := make([]byte, 12)
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		panic(err.Error())
 	}
 
-	cfb := cipher.NewCFBEncrypter(block, iv)
-	cfb.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
-
-	return ciphertext
-}
-
-func Decrypt(password string, ciphertext []byte) []byte {
-	key := DeriveKey(password)
-
-	block, err := aes.NewCipher(key)
-
+	aesgcm, err := cipher.NewGCM(block)
 	if err != nil {
 		panic(err)
 	}
 
-	if len(ciphertext) < aes.BlockSize {
-		panic("cipherText too short")
+	ciphertext := aesgcm.Seal(nil, nonce, plaintext, nil)
+
+	cs := CryptStore{
+		Nonce:      base64.StdEncoding.EncodeToString(nonce),
+		Ciphertext: base64.StdEncoding.EncodeToString(ciphertext),
 	}
 
-	iv := ciphertext[:aes.BlockSize]
-	ciphertext = ciphertext[aes.BlockSize:]
+	dat, _ := json.Marshal(cs)
 
-	stream := cipher.NewCFBDecrypter(block, iv)
+	return dat
+}
 
-	stream.XORKeyStream(ciphertext, ciphertext)
+func Decrypt(password string, ctext []byte) []byte {
+	var cs CryptStore
 
-	return ciphertext
+	err := json.Unmarshal(ctext, &cs)
+	if err != nil {
+		panic(err)
+	}
+
+	ciphertext, err := base64.StdEncoding.DecodeString(cs.Ciphertext)
+	if err != nil {
+		panic(err)
+	}
+	nonce, err := base64.StdEncoding.DecodeString(cs.Nonce)
+	if err != nil {
+		panic(err)
+	}
+	key := DeriveKey(password)
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	plaintext, err := aesgcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return plaintext
 }
