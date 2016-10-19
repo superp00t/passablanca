@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -18,19 +19,22 @@ import (
 )
 
 const helpMessage = `To add an account:
-   register <website URL> <account name> <password>
+	register <website URL> <account name> <password>
 
 To list passwords:
-    ls 
+	ls <optional URL match regex>
 
 To copy a password to clipboard:
-    clip <numeric ID>
+	clip <numeric ID>
     
-To display this message: 
-   help
+To display this message:
+	help
 
+To generate a random password:
+	generate
+	
 To quit Passablanca: 
-   quit
+	quit
 `
 const hdr = `    ____                        __    __                      
    / __ \____ _______________ _/ /_  / /___ _____  _________ _
@@ -46,7 +50,7 @@ type AccountEntry struct {
 }
 
 type Database struct {
-	Accounts []AccountEntry
+	Accounts map[int]AccountEntry
 }
 
 var dblocation string
@@ -68,7 +72,10 @@ func main() {
 
 		fmt.Println("Your password is " + password)
 
-		db := Database{}
+		mp := make(map[int]AccountEntry)
+		db := Database{
+			Accounts: mp,
+		}
 		WriteDatabase(password, db)
 
 		fmt.Println("Password list has been created at " + dblocation)
@@ -106,6 +113,8 @@ func main() {
 			args := strings.Split(ln.Line, " ")
 
 			switch args[0] {
+			case "generate":
+				fmt.Println(cryptutil.RandomString())
 			case "register":
 				if len(args) == 4 {
 					ae := AccountEntry{
@@ -114,7 +123,7 @@ func main() {
 						Password: args[3],
 					}
 
-					db.Accounts = append(db.Accounts, ae)
+					db.Accounts[MaxInt(db.Accounts)+1] = ae
 
 					WriteDatabase(password, db)
 				} else {
@@ -123,15 +132,34 @@ func main() {
 			case "ls":
 				Headers := []string{"ID", "URL", "Username", "Password"}
 				var Body [][]string
+				var rgx *regexp.Regexp
+				if len(args) == 2 {
+					rgx, err = regexp.Compile(args[1])
+					if err != nil {
+						fmt.Println(err.Error())
+						continue
+					}
+				}
 
-				for ae := range db.Accounts {
-					a := db.Accounts[ae]
-					Body = append(Body, []string{
-						fmt.Sprintf("%d", ae),
-						a.URL,
-						a.Username,
-						a.Password,
-					})
+				for k, v := range db.Accounts {
+					if len(args) == 2 {
+						mt := rgx.MatchString(v.URL)
+						if mt {
+							Body = append(Body, []string{
+								fmt.Sprintf("%d", k),
+								v.URL,
+								v.Username,
+								v.Password,
+							})
+						}
+					} else {
+						Body = append(Body, []string{
+							fmt.Sprintf("%d", k),
+							v.URL,
+							v.Username,
+							v.Password,
+						})
+					}
 				}
 
 				table := tablewriter.NewWriter(os.Stdout)
@@ -160,6 +188,12 @@ func main() {
 				} else {
 					fmt.Println("Usage: clip <numeric id>")
 				}
+			case "inspect":
+				dat, err := json.MarshalIndent(db, "", "    ")
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println(string(dat))
 			case "help":
 				fmt.Println(helpMessage)
 			case "quit":
@@ -179,13 +213,17 @@ func ReadDatabase(password string) Database {
 		panic(err)
 	}
 
-	decryptedDbData := cryptutil.Decrypt(password, encryptedDbData)
+	decryptedDbData, err := cryptutil.Decrypt(password, encryptedDbData)
+	if err != nil {
+		fmt.Println("Could not decode the ~/.passablanca_store file. Maybe you entered in the wrong password?")
+		os.Exit(-1)
+	}
 
 	var db Database
 
 	err = json.Unmarshal(decryptedDbData, &db)
 	if err != nil {
-		fmt.Println("Could not decode the .passablanca_store file. Maybe you entered in the wrong password?")
+		fmt.Println("Could not decode the ~/.passablanca_store file. Maybe you entered in the wrong password?")
 		os.Exit(-1)
 	}
 	return db
@@ -199,4 +237,14 @@ func WriteDatabase(password string, db Database) {
 
 	encryptedDbData := cryptutil.Encrypt(password, dat)
 	ioutil.WriteFile(dblocation, encryptedDbData, 0755)
+}
+
+func MaxInt(m map[int]AccountEntry) int {
+	ret := 0
+	for k, _ := range m {
+		if k > ret {
+			ret = k
+		}
+	}
+	return ret
 }

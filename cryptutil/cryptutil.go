@@ -7,8 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-
 	"io"
+	rd "math/rand"
+	"time"
 )
 
 type CryptStore struct {
@@ -51,7 +52,7 @@ func Encrypt(password string, plaintext []byte) []byte {
 	return dat
 }
 
-func Decrypt(password string, ctext []byte) []byte {
+func Decrypt(password string, ctext []byte) ([]byte, error) {
 	var cs CryptStore
 
 	err := json.Unmarshal(ctext, &cs)
@@ -81,8 +82,15 @@ func Decrypt(password string, ctext []byte) []byte {
 
 	plaintext, err := aesgcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
-	return plaintext
+	return plaintext, nil
+}
+
+func RandomString() string {
+	rd.Seed(time.Now().UnixNano())
+	sl := make([]byte, 36)
+	rand.Read(sl)
+	return base64.StdEncoding.EncodeToString(sl)
 }
