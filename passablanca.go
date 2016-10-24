@@ -50,7 +50,7 @@ type AccountEntry struct {
 }
 
 type Database struct {
-	Accounts map[int]AccountEntry
+	Accounts map[int]*AccountEntry
 }
 
 var dblocation string
@@ -72,7 +72,7 @@ func main() {
 
 		fmt.Println("Your password is " + password)
 
-		mp := make(map[int]AccountEntry)
+		mp := make(map[int]*AccountEntry)
 		db := Database{
 			Accounts: mp,
 		}
@@ -117,7 +117,7 @@ func main() {
 				fmt.Println(cryptutil.RandomString())
 			case "register":
 				if len(args) == 4 {
-					ae := AccountEntry{
+					ae := &AccountEntry{
 						URL:      args[1],
 						Username: args[2],
 						Password: args[3],
@@ -172,11 +172,10 @@ func main() {
 				if len(args) == 2 {
 					index, err := strconv.Atoi(args[1])
 					if err != nil {
-						fmt.Println(args[1] + " is not a valid ID.")
+						fmt.Println(args[1] + " is not a valid ID. (" + err.Error() + ")")
 					} else {
-						tr := len(db.Accounts) - 1
-						if index > tr || index < 0 {
-							fmt.Println(args[1] + " is not a valid ID.")
+						if db.Accounts[index] == nil {
+							fmt.Println(args[1] + " account entry does not exist.")
 						} else {
 							if err := clipboard.WriteAll(db.Accounts[index].Password); err != nil {
 								fmt.Println("Clipboard paste failed :(")
@@ -239,7 +238,7 @@ func WriteDatabase(password string, db Database) {
 	ioutil.WriteFile(dblocation, encryptedDbData, 0755)
 }
 
-func MaxInt(m map[int]AccountEntry) int {
+func MaxInt(m map[int]*AccountEntry) int {
 	ret := 0
 	for k, _ := range m {
 		if k > ret {
