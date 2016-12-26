@@ -1,20 +1,21 @@
 package cryptutil
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
+	"encoding/gob"
 	"io"
-	rd "math/rand"
-	"time"
+	"strings"
+
+	"github.com/superp00t/niceware"
 )
 
 type CryptStore struct {
-	Nonce      string
-	Ciphertext string
+	Nonce      []byte
+	Ciphertext []byte
 }
 
 func DeriveKey(password string) []byte {
@@ -43,44 +44,37 @@ func Encrypt(password string, plaintext []byte) []byte {
 	ciphertext := aesgcm.Seal(nil, nonce, plaintext, nil)
 
 	cs := CryptStore{
-		Nonce:      base64.StdEncoding.EncodeToString(nonce),
-		Ciphertext: base64.StdEncoding.EncodeToString(ciphertext),
+		Nonce:      nonce,
+		Ciphertext: ciphertext,
 	}
 
-	dat, _ := json.Marshal(cs)
+	var buf bytes.Buffer
+	gob.NewEncoder(&buf).Encode(cs)
 
-	return dat
+	return buf.Bytes()
 }
 
 func Decrypt(password string, ctext []byte) ([]byte, error) {
 	var cs CryptStore
 
-	err := json.Unmarshal(ctext, &cs)
+	err := gob.NewDecoder(bytes.NewReader(ctext)).Decode(&cs)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	ciphertext, err := base64.StdEncoding.DecodeString(cs.Ciphertext)
-	if err != nil {
-		panic(err)
-	}
-	nonce, err := base64.StdEncoding.DecodeString(cs.Nonce)
-	if err != nil {
-		panic(err)
-	}
 	key := DeriveKey(password)
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	aesgcm, err := cipher.NewGCM(block)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
-	plaintext, err := aesgcm.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := aesgcm.Open(nil, cs.Nonce, cs.Ciphertext, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +83,7 @@ func Decrypt(password string, ctext []byte) ([]byte, error) {
 }
 
 func RandomString() string {
-	rd.Seed(time.Now().UnixNano())
-	sl := make([]byte, 36)
-	rand.Read(sl)
-	return base64.StdEncoding.EncodeToString(sl)
+	pass, _ := niceware.RandomString(12)
+	fixedpass := strings.Replace(pass, " ", "_", -1)
+	return fixedpass
 }

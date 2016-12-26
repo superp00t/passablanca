@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -8,7 +10,6 @@ import (
 	"os/user"
 	"path"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -18,6 +19,8 @@ import (
 	readline "github.com/superp00t/readline"
 )
 
+const Version = float64(0.02)
+
 const helpMessage = `To add an account:
 	register <website URL> <account name> <password>
 
@@ -26,31 +29,31 @@ To list passwords:
 
 To copy a password to clipboard:
 	clip <numeric ID>
-    
+
 To display this message:
 	help
 
 To generate a random password:
 	generate
-	
-To quit Passablanca: 
+
+To quit Passablanca:
 	quit
 `
-const hdr = `    ____                        __    __                      
+const hdr = `    ____                        __    __
    / __ \____ _______________ _/ /_  / /___ _____  _________ _
   / /_/ / __  / ___/ ___/ __  / __ \/ / __  / __ \/ ___/ __  /
- / ____/ /_/ (__  |__  ) /_/ / /_/ / / /_/ / / / / /__/ /_/ / 
-/_/    \__,_/____/____/\__,_/_.___/_/\__,_/_/ /_/\___/\__,_/  
+ / ____/ /_/ (__  |__  ) /_/ / /_/ / / /_/ / / / / /__/ /_/ /
+/_/    \__,_/____/____/\__,_/_.___/_/\__,_/_/ /_/\___/\__,_/
 `
 
 type AccountEntry struct {
-	URL      string
 	Username string
 	Password string
 }
 
 type Database struct {
-	Accounts map[int]*AccountEntry
+	PassablancaVersion float64
+	Accounts           map[string]*AccountEntry
 }
 
 var dblocation string
@@ -72,10 +75,12 @@ func main() {
 
 		fmt.Println("Your password is " + password)
 
-		mp := make(map[int]*AccountEntry)
+		mp := make(map[string]*AccountEntry)
 		db := Database{
-			Accounts: mp,
+			PassablancaVersion: Version,
+			Accounts:           mp,
 		}
+
 		WriteDatabase(password, db)
 
 		fmt.Println("Password list has been created at " + dblocation)
@@ -116,21 +121,28 @@ func main() {
 			case "generate":
 				fmt.Println(cryptutil.RandomString())
 			case "register":
-				if len(args) == 4 {
+				switch len(args) {
+				case 3:
 					ae := &AccountEntry{
-						URL:      args[1],
+						Username: args[2],
+						Password: cryptutil.RandomString(),
+					}
+
+					db.Accounts[args[1]] = ae
+					WriteDatabase(password, db)
+				case 4:
+					ae := &AccountEntry{
 						Username: args[2],
 						Password: args[3],
 					}
 
-					db.Accounts[MaxInt(db.Accounts)+1] = ae
-
+					db.Accounts[args[1]] = ae
 					WriteDatabase(password, db)
-				} else {
-					fmt.Println("Usage: register <website URL> <account name> <password>")
+				default:
+					fmt.Println("usage: register <url> <username> <password>")
 				}
 			case "ls":
-				Headers := []string{"ID", "URL", "Username", "Password"}
+				Headers := []string{"URL", "Username", "Password"}
 				var Body [][]string
 				var rgx *regexp.Regexp
 				if len(args) == 2 {
@@ -143,19 +155,17 @@ func main() {
 
 				for k, v := range db.Accounts {
 					if len(args) == 2 {
-						mt := rgx.MatchString(v.URL)
+						mt := rgx.MatchString(k)
 						if mt {
 							Body = append(Body, []string{
-								fmt.Sprintf("%d", k),
-								v.URL,
+								k,
 								v.Username,
 								v.Password,
 							})
 						}
 					} else {
 						Body = append(Body, []string{
-							fmt.Sprintf("%d", k),
-							v.URL,
+							k,
 							v.Username,
 							v.Password,
 						})
@@ -170,18 +180,13 @@ func main() {
 				table.Render()
 			case "clip":
 				if len(args) == 2 {
-					index, err := strconv.Atoi(args[1])
-					if err != nil {
-						fmt.Println(args[1] + " is not a valid ID. (" + err.Error() + ")")
+					if db.Accounts[args[1]] == nil {
+						fmt.Println(args[1] + " account entry does not exist.")
 					} else {
-						if db.Accounts[index] == nil {
-							fmt.Println(args[1] + " account entry does not exist.")
+						if err := clipboard.WriteAll(db.Accounts[args[1]].Password); err != nil {
+							fmt.Println("Clipboard paste failed :(")
 						} else {
-							if err := clipboard.WriteAll(db.Accounts[index].Password); err != nil {
-								fmt.Println("Clipboard paste failed :(")
-							} else {
-								fmt.Println("Password copied to clipboard!")
-							}
+							fmt.Println("Password copied to clipboard!")
 						}
 					}
 				} else {
@@ -220,7 +225,7 @@ func ReadDatabase(password string) Database {
 
 	var db Database
 
-	err = json.Unmarshal(decryptedDbData, &db)
+	err = gob.NewDecoder(bytes.NewReader(decryptedDbData)).Decode(&db)
 	if err != nil {
 		fmt.Println("Could not decode the ~/.passablanca_store file. Maybe you entered in the wrong password?")
 		os.Exit(-1)
@@ -229,21 +234,12 @@ func ReadDatabase(password string) Database {
 }
 
 func WriteDatabase(password string, db Database) {
-	dat, err := json.MarshalIndent(db, "", "    ")
+	var data bytes.Buffer
+	err := gob.NewEncoder(&data).Encode(db)
 	if err != nil {
 		panic(err)
 	}
 
-	encryptedDbData := cryptutil.Encrypt(password, dat)
-	ioutil.WriteFile(dblocation, encryptedDbData, 0755)
-}
-
-func MaxInt(m map[int]*AccountEntry) int {
-	ret := 0
-	for k, _ := range m {
-		if k > ret {
-			ret = k
-		}
-	}
-	return ret
+	encryptedDbData := cryptutil.Encrypt(password, data.Bytes())
+	ioutil.WriteFile(dblocation, encryptedDbData, 0700)
 }
