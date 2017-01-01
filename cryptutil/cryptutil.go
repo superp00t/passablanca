@@ -83,7 +83,7 @@ func Decrypt(password string, ctext []byte) ([]byte, error) {
 }
 
 func RandomString() string {
-	pass, _ := niceware.RandomString(12)
+	pass, _ := niceware.RandomString()
 	fixedpass := strings.Replace(pass, " ", "_", -1)
 	return fixedpass
 }
